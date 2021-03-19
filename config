@@ -1,0 +1,256 @@
+#!/bin/bash
+# Copyright 2021 James E. Scarborough and Red Hat, Inc.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+set -e
+
+scriptpath="$(dirname $(readlink -f "$BASH_SOURCE"))"
+function console() {
+    echo -e "$*" >/dev/stderr
+}
+
+function usage() {
+    cat >/dev/stderr << "   EOF"
+Usage:
+   $0 <action> <environment> <object>
+
+actions:
+   unpack <environment> <zipfile> - turn a zip file into an exploded directory of objects
+   pack <environment> <zipfile> - turn an exploded directory, pwd, of objects into a zip file
+   set <environment> <app> - pack the config in apps/<app> and push it to <environment>
+   get <environment> <app> - fetch the config from <environment> and put it in apps/<app>
+   validate <environment> <app> - send the cnofig in apps/<app> to <environment> for validation
+
+files:
+   clusters.ini - variables to be substituted in the config among environments, and
+                particularly fusion=https://.../ pointing to some Fusion deployment,
+                one section per environment
+   ~/.netrc - credentials for basic auth to access the Fusion deployments, of the form
+               machine developers-fusion.corp.stage.redhat.com login jscarbor-ci password <secret>
+   apps/<app>/exploded_objects - one file per object in the app config
+   apps/<app>/index.json - a table of contents of the objects to facilitate reassembling 
+               in the correct order
+   /tmp - workspace for all the zipping and unzipping
+
+   EOF
+   exit $1
+}
+
+
+# Read a single variable from the environment
+function read_config() {
+   echo "$config" | grep '^\['$env'\]'$1'=' | cut -d= -f2- 
+}
+
+# Return a list of keys and values on subsequent lines 
+# for the current environment, sorted in nonincreasing
+# order of value length
+function env_config() {
+    echo "$config" | \
+        perl -e 'print sort { (length($b)-index($b,"=")) <=> (length($a)-index($a,"=")) } <>' | \
+        sed -rn 's/^\['$env'\](.*)=(.*)/\1\n\2/p'
+}
+
+# Turn a word into a delimited token for later replacement
+function tok() {
+    echo '${{'"$1"'}}'
+}
+
+# Search through the current directory and replace $1 with $2
+function search_and_replace() {
+   local fs=$(echo "$1" | sed -e 's/[]\/$*.^[]/\\&/g')
+   local rs=$(echo "$2" | sed -e 's/[\/&]/\\&/g')
+   local files=$(grep -rl "$fs" .) 
+   if [ ! -z "$files" ]; then
+       echo "$files" | xargs sed -i "s/$fs/$rs/g"
+   fi
+}
+
+# Unzip the named zipfile into pwd
+function unzip_fusion() {
+    local zipfile="$1"
+
+    console Unzipping $(basename $(pwd))
+    unzip -oq $zipfile
+
+    console Substituting environment vars
+    # Search and replace, from longest to shortest
+    env_config | while read key; do
+       read val
+       search_and_replace "$val" "$(tok "$key")"
+    done
+
+    $scriptpath/explode_objects.py
+}
+
+# Reconstitute the pwd into a zipfile
+# Returns: the zipfile name (in /tmp) 
+function zip_fusion() {
+    console Creating temp folder
+    local tmpdir=$(mktemp -d)
+    local appdir=$(pwd)
+    cp --preserve=all -r ./* $tmpdir/.
+
+    cd $tmpdir
+    console Reconstituting objects
+    $scriptpath/reconstitute_objects.py
+    rm -r exploded_objects index.json
+
+    console Substituting environment vars
+    env_config | while read key; do
+       read val
+       search_and_replace "$(tok "$key")" "$val"
+    done
+
+    console Zipping $(basename $appdir)
+    local zipfile=$(mktemp --suffix=.zip)
+    # Zip only works on zip files, so give it an empty one to start with
+    echo "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==" | base64 -d >$zipfile
+    zip -qr $zipfile .
+    cd $appdir
+    rm -rf $tmpdir
+
+    echo $zipfile
+}
+
+function get_fusion_url() {
+    local fusion=$(read_config fusion)
+    
+    if [ -z "$fusion" ]; then
+        console "Environment $env does not have a fusion setting in clusters.ini"
+        exit 2
+    fi
+    
+    echo $fusion
+}
+
+function qcurl() {
+    local output_to=$(mktemp)
+    set -x
+    local status=$( curl --netrc --output $output_to --write-out '%{http_code}' -s "$@" | sed s/\'//g )
+    set +x
+    local received_type=$(file -b $output_to)
+    if [[ $status > 299 ]] ; then 
+        console "$status error from curl" 
+        if echo $received_type | grep -qE '(ASCII|JSON)' ; then
+            echo Check $output_to for more info
+        fi
+        exit 199
+    fi
+    console "Response from curl: $received_type"
+    cat $output_to
+    rm $output_to
+}
+
+function postit() {
+    local action=$1
+    local msg
+    local expected_status
+    case $action in
+        "import")
+            msg="Uploading $app to $fusion \(in $zipfile\)"
+            action='import?importPolicy=overwrite'
+            expected_status="Import was completed"
+            ;;
+        "validate")
+            msg="Validating $app with $fusion \(in $zipfile\)"
+            expected_status="Validation completed with no errors"
+            ;;
+        *)
+            console "Unknown action for postit"
+            exit 255 
+            ;;
+    esac
+    get_fusion_url
+    [ -d "apps/$app" ] || ( console "App folder $app not found on local filesystem" && exit 4)
+    cd "apps/$app"
+    zipfile="$(zip_fusion)"
+
+    console "Uploading $app to $fusion (in $zipfile)"
+    local response=$(qcurl -X POST \
+        -F "importData=@$zipfile" \
+        -H 'Connection: keep-alive' \
+        -H 'Accept: application/json, text/plain, */*' \
+        -H 'Origin: https://developers-fusion.corp.stage.redhat.com' \
+        -H 'Sec-Fetch-Site: same-origin' \
+        -H 'Sec-Fetch-Mode: cors' \
+        -H 'Sec-Fetch-Dest: empty' \
+        -H 'Referer: https://developers-fusion.corp.stage.redhat.com/admin/' \
+        -H 'Accept-Language: en-US,en;q=0.9' \
+        $fusion/api/apollo/objects/$action)
+    echo "$response" | jq . || echo "$response"
+    echo "$response" | jq .status | grep -q "$expected_status" || ( console "Not valid." && exit 10)
+    console Success.
+    console Removing tmp $zipfile
+    rm -f "$zipfile"
+}
+
+[[ $# -ne 3 ]] && usage
+action=$1
+env=$2
+
+clusterpath="$scriptpath"
+pwd | grep -q /apps/ && clusterpath="$(pwd | sed 's#/apps/.*##'):$clusterpath"
+clusterpath="$(pwd):$clusterpath"
+for p in ${clusterpath//:/ }; do
+    if [ -f "$p/clusters.ini" ] ; then
+        clusters_ini="$p/clusters.ini"
+        break
+    fi
+done
+
+[ -z "$clusters_ini" ] && console "clusters.ini not in $clusterpath" && exit 11
+[ -r "$clusters_ini" ] || (console "Cannot find $clusters_ini" && exit 11)
+
+config=$(awk '/\[/{prefix=$0; next} $1{print prefix $0}' $clusters_ini)
+
+fusion=$(get_fusion_url)
+
+case $action in
+    "pack")
+        app=$(basename $(pwd))
+        mv $(zip_fusion) $3
+        ;;
+    "unpack")
+        unzip_fusion "$3"
+        ;;
+    "get")
+        app=$3
+        zipfile=$(mktemp --suffix=.zip)
+
+
+        apps=$(qcurl $fusion/api/apps | jq -r ".[] | .id")
+        echo "$apps" | grep -q "$app" || ( console "App $app not found on server which has $apps" && exit 3)
+        console "Downloading $app"
+        qcurl $fusion/api/objects/export\?app.ids=$app >"$zipfile"
+        file $zipfile
+        mkdir -p "apps/$app"
+        cd "apps/$app"
+        unzip_fusion "$zipfile"
+        rm "$zipfile"
+        ;;
+    "set")
+        app=$3
+        postit import
+        ;;
+    "validate")
+        app=$3
+        postit validate
+        ;;
+    *)
+        console "Unknown action $action"
+        usage
+        ;;
+esac

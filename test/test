@@ -1,0 +1,78 @@
+#!/bin/bash
+
+scriptpath="$(dirname $(readlink -f "$BASH_SOURCE"))"
+config="$(readlink -f $scriptpath/../config)"
+
+function jqreplace1() {
+    local t="$(mktemp)"
+    mv -f "$1" "$t"
+    jq . <"$t" >"$1"
+    rm -f $t
+}
+
+function testExplodeReconstitute() {
+   #
+   # This test will do the following:
+   # 1. Unpack a test zip file into the exploded format
+   # 2. Repack the exploded format into another zip file
+   # 3. Assert that the two zip files have the same content, allowing for normal variations in json representation
+   #
+   # To do this, it makes a tmp directory and does all its work within that.  Here's the structure of that directory:
+   #
+   # $workdir
+   #   +- apps
+   #   |  +- developers  ($projdir - where test unzip goes)
+   #   |  +- reference   ($reference_unzip - where the orig zip file gets unzipped)
+   #   |  +- test        ($test_unzip - where the test zip file gets unzipped)
+   #   +- after.zip      ($zipped_output - result of unpacking and repacking)
+
+   local workdir="$(mktemp -d)"
+   local projdir="$workdir/apps/developers"
+   local test_path="$(dirname $(readlink -f "$BASH_SOURCE"))"
+   local reference_zip="$test_path/resources/example1.zip"
+   mkdir -p $projdir
+
+   cp "$test_path/resources/clusters.ini" "$workdir"
+   ############# Execution phase
+
+   # Explode and reconstitute   
+   cd $projdir
+   cp "$test_path/resources/clusters.ini" "$workdir/."
+
+   zipped_output="$workdir/after.zip"
+
+   $config unpack stage "$reference_zip" || fail "Cannot unpack" || return
+   $config pack stage "$zipped_output" || fail "Cannot re-pack" || return
+
+   ############# Evaluation phase
+
+   # unzip both zip files and check the diffs
+   # starting with the reference file
+   local reference_unzip="$workdir/apps/reference"
+   mkdir -p "$reference_unzip"
+   cd "$reference_unzip"
+   unzip -q "$reference_zip"
+   jqreplace1 "$reference_unzip/objects.json"
+
+   local test_unzip="$workdir/apps/test"
+   mkdir -p "$test_unzip"
+   cd "$test_unzip"
+   unzip -q "$zipped_output"
+   jqreplace1 "$test_unzip/objects.json"
+
+   diffresult=$(diff -br "$reference_unzip" "$test_unzip")
+   diffcode=$?
+   echo "$diffresult" | head -20
+   [[ "$diffcode" -eq "0" ]] || fail "Differences found.  Failing." || return
+
+   ############ Cleanup
+   cd "$test_path"
+   rm -r "$workdir"
+}
+
+function testUsage() {
+   $config 2>&1 >/dev/null | grep -qi "usage:" || fail "Usage not found on stderr with empty command line"
+}
+
+# see https://github.com/kward/shunit2/
+. ./shunit2
