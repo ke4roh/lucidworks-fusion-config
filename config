@@ -5,12 +5,12 @@
 # it under the terms of the GNU Lesser General Public License as
 # published by the Free Software Foundation, either version 3 of
 # the License, or (at your option) any later version.
-# 
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
@@ -40,7 +40,7 @@ files:
    ~/.netrc - credentials for basic auth to access the Fusion deployments, of the form
                machine developers-fusion.corp.stage.redhat.com login jscarbor-ci password <secret>
    apps/<app>/exploded_objects - one file per object in the app config
-   apps/<app>/index.json - a table of contents of the objects to facilitate reassembling 
+   apps/<app>/index.json - a table of contents of the objects to facilitate reassembling
                in the correct order
    /tmp - workspace for all the zipping and unzipping
 
@@ -51,10 +51,10 @@ files:
 
 # Read a single variable from the environment
 function read_config() {
-   echo "$config" | grep '^\['$env'\]'$1'=' | cut -d= -f2- 
+   echo "$config" | grep '^\['$env'\]'$1'=' | cut -d= -f2-
 }
 
-# Return a list of keys and values on subsequent lines 
+# Return a list of keys and values on subsequent lines
 # for the current environment, sorted in nonincreasing
 # order of value length
 function env_config() {
@@ -72,7 +72,7 @@ function tok() {
 function search_and_replace() {
    local fs=$(echo "$1" | sed -e 's/[]\/$*.^[]/\\&/g')
    local rs=$(echo "$2" | sed -e 's/[\/&]/\\&/g')
-   local files=$(grep -rl "$fs" .) 
+   local files=$(grep -rl "$fs" .)
    if [ ! -z "$files" ]; then
        echo "$files" | xargs sed -i "s/$fs/$rs/g"
    fi
@@ -96,7 +96,7 @@ function unzip_fusion() {
 }
 
 # Reconstitute the pwd into a zipfile
-# Returns: the zipfile name (in /tmp) 
+# Returns: the zipfile name (in /tmp)
 function zip_fusion() {
     console Creating temp folder
     local tmpdir=$(mktemp -d)
@@ -132,12 +132,12 @@ function zip_fusion() {
 
 function get_fusion_url() {
     local fusion=$(read_config fusion)
-    
+
     if [ -z "$fusion" ]; then
         console "Environment $env does not have a fusion setting in clusters.ini"
         exit 2
     fi
-    
+
     echo $fusion
 }
 
@@ -147,8 +147,8 @@ function qcurl() {
     local status=$( curl --netrc --output $output_to --write-out '%{http_code}' -s "$@" | sed s/\'//g )
     set +x
     local received_type=$(file -b $output_to)
-    if [[ $status > 299 ]] ; then 
-        console "$status error from curl" 
+    if [[ $status > 299 ]] ; then
+        console "$status error from curl"
         if echo $received_type | grep -qE '(ASCII|JSON)' ; then
             echo Check $output_to for more info
         fi
@@ -175,7 +175,7 @@ function postit() {
             ;;
         *)
             console "Unknown action for postit"
-            exit 255 
+            exit 255
             ;;
     esac
     get_fusion_url
