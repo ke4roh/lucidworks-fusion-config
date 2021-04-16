@@ -39,7 +39,7 @@ function testExplodeReconstitute() {
    cd $projdir
    cp "$test_path/resources/clusters.ini" "$workdir/."
 
-   zipped_output="$workdir/after.zip"
+   local zipped_output="$workdir/after.zip"
 
    $config unpack stage "$reference_zip" || fail "Cannot unpack" || return
    $config pack stage "$zipped_output" || fail "Cannot re-pack" || return
@@ -71,8 +71,56 @@ function testExplodeReconstitute() {
 }
 
 function testUsage() {
-   $config 2>&1 >/dev/null | grep -qi "usage:" || fail "Usage not found on stderr with empty command line"
+   $config 2>&1 >/dev/null | grep -qi "usage:" || fail "Usage not found on stderr with empty command line" || return
 }
 
+function testPackForStandalone() {
+   # Pack for standalone needs to change numshards, replicationFactor and maxShardsPerNode to 1.
+
+   local workdir="$(mktemp -d)"
+   local projdir="$workdir/apps/developers"
+   local test_path="$(dirname $(readlink -f "$BASH_SOURCE"))"
+   local reference_zip="$test_path/resources/example1.zip"
+   mkdir -p $projdir
+
+   cp "$test_path/resources/clusters.ini" "$workdir"
+
+   ############# Execution phase
+
+   # Explode and reconstitute
+   cd $projdir
+   cp "$test_path/resources/clusters.ini" "$workdir/."
+
+   local zipped_output="$workdir/after.zip"
+
+   $config unpack "local" "$reference_zip" || fail "Cannot unpack" || return
+   $config pack "local" "$zipped_output" || fail "Cannot re-pack" || return
+
+   local compare_dir="$workdir/compare_dir"
+   mkdir "$compare_dir"
+   cd "$compare_dir"
+
+   unzip "$zipped_output" objects.json
+   jq . <objects.json >objects_new.json
+
+   rm objects.json
+
+   unzip "$reference_zip" objects.json
+   jq . <objects.json >objects_orig.json
+
+   ############# Evaluation phase
+   # There were changes
+   local nuevolines=$(diff objects_orig.json objects_new.json | grep '^>' | grep -E '"(numShards|replicationFactor|maxShardsPerNode)"\s*:' | wc -l)
+   assertTrue "No changes appeared. ($nuevolines)" "[ "$nuevolines" -gt 0 ]" || { echo "$diffs" && return; }
+   # Only the three values mentioned should be changed
+   diff objects_orig.json objects_new.json | grep '^[><]' | grep -vE '"(numShards|replicationFactor|maxShardsPerNode)"\s*:' && { fail "An unexpected field changed" || return; }
+   # All the values changed have to change to 1
+   diff objects_orig.json objects_new.json | grep '^>' | grep -v ': 1\b' && { fail "Something wasn't 1 in the output" || return; }
+
+   ############ Cleanup
+   cd "$test_path"
+   rm -r "$workdir"
+
+}
 # see https://github.com/kward/shunit2/
 . ./shunit2

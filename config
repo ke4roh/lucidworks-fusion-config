@@ -89,7 +89,7 @@ function unzip_fusion() {
     # Search and replace, from longest to shortest
     env_config | while read key; do
        read val
-       search_and_replace "$val" "$(tok "$key")"
+       [ "$key" == "standalone" ] || search_and_replace "$val" "$(tok "$key")"
     done
 
     $scriptpath/explode_objects.py
@@ -111,8 +111,13 @@ function zip_fusion() {
     console Substituting environment vars
     env_config | while read key; do
        read val
-       search_and_replace "$(tok "$key")" "$val"
+       [ "$key" == "standalone" ] || search_and_replace "$(tok "$key")" "$val"
     done
+
+    if [ "$(read_config standalone)" == "true" ]; then
+       console "Setting shards/replication = 1 for standalone"
+       sed -E -i 's#"(numShards|replicationFactor|maxShardsPerNode)"\s*:\s*[0-9]+#"\1" : 1#' objects.json
+    fi
 
     console Zipping $(basename $appdir)
     local zipfile=$(mktemp --suffix=.zip)
@@ -183,11 +188,11 @@ function postit() {
         -F "importData=@$zipfile" \
         -H 'Connection: keep-alive' \
         -H 'Accept: application/json, text/plain, */*' \
-        -H 'Origin: https://developers-fusion.corp.stage.redhat.com' \
+        -H "Origin: $fusion" \
         -H 'Sec-Fetch-Site: same-origin' \
         -H 'Sec-Fetch-Mode: cors' \
         -H 'Sec-Fetch-Dest: empty' \
-        -H 'Referer: https://developers-fusion.corp.stage.redhat.com/admin/' \
+        -H "Referer: $fusion/admin/" \
         -H 'Accept-Language: en-US,en;q=0.9' \
         $fusion/api/apollo/objects/$action)
     echo "$response" | jq . || echo "$response"
