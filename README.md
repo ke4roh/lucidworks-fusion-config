@@ -2,7 +2,7 @@
 Lucidworks Fusion configuration as code utility
 
 ## Introduction
-Configuration as code is a standard practice in software development 
+Configuration as code is a standard practice in software development
 circles nowadays, and the configuration of Lucidworks Fusion is no
 exception.  This utility facilitates segmentation of a Lucidworks
 Fusion app into its component objects to facilitate change tracking
@@ -29,7 +29,7 @@ git init
 Then in that repo, create a clusters.ini file which names
 each cluster and sets any variables you'll want to replace.
 
-N.B. when a config is downloaded from a source, variables 
+N.B. when a config is downloaded from a source, variables
 in these definitions will be substituted for the values
 found within those variables, so short variables like the
 number of clusters aren't suitable.
@@ -40,6 +40,7 @@ fusion=http://fusion.example.com/
 myvar=The quick brown fox jumps over the lazy dog.
 
 [local]
+standalone=true
 fusion=http://localhost:8764
 myvar=The five boxing wizards jump quickly.
 ```
@@ -51,33 +52,39 @@ download it:
 /path/to/config get prod my_app
 ```
 
-this will create the directory apps/my_app in your project. The "apps" 
+this will create the directory apps/my_app in your project. The "apps"
 directory is to support multiple applications, and it is important
 to the script to identify where to find its clusters.ini.  Don't mess
 with it.
 
-Inside the apps/my_app directory, you will find index.json, which 
+Inside the apps/my_app directory, you will find index.json, which
 retains the order of the objects that were included in the download,
-and an exploded_objects folder which contains a folder for every 
+and an exploded_objects folder which contains a folder for every
 type of object downloaded, and each of those folders contains
 a file for each object.
 
 Make any changes, keeping index.json consistent with the files,
-commit and review as per your regular procedures, then upload your 
+commit and review as per your regular procedures, then upload your
 config like so:
 
 ```bash
 /path/to/config set prod my_app
 ```
 
-Changes are applied with the "overwrite" option.  If 
+Changes are applied with the "overwrite" option.  If
 any objects might have been removed from the configuration,
 they will not be removed from Fusion.
 
+The "standalone=true" clause in the clusters.ini file
+indicates that that particular target is to have numShards,
+replicationFactor, and maxShardsPerNode set to 1 for every
+collection regardless of what is given for those values
+in the config.
+
 ## More advanced usage
 If you need to work with the zip files that Fusion uses,
-the `pack` and `unpack` operations transform between the 
-exploded and zipped formats. 
+the `pack` and `unpack` operations transform between the
+exploded and zipped formats.
 
 The `validate` action sends the change to Fusion without
 applying it.
@@ -89,8 +96,8 @@ with more details.
 Copyright 2021 by James E. Scarborough and Red Hat, Inc.
 
 This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as 
-published by the Free Software Foundation, either version 3 of 
+it under the terms of the GNU Lesser General Public License as
+published by the Free Software Foundation, either version 3 of
 the License, or (at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
