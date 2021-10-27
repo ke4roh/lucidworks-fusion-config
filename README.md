@@ -26,7 +26,7 @@ cd my_app
 git init
 ```
 
-Then in that repo, create a clusters.ini file which names
+Then in that repo, create a `clusters.ini` file which names
 each cluster and sets any variables you'll want to replace.
 
 N.B. when a config is downloaded from a source, variables
@@ -43,6 +43,23 @@ myvar=The quick brown fox jumps over the lazy dog.
 standalone=true
 fusion=http://localhost:8764
 myvar=The five boxing wizards jump quickly.
+```
+
+You'll also need to create a `~/.netrc` file if you 
+don't already have one (it's standard):
+
+```
+touch ~/.netrc
+chmod 600 ~/.netrc
+vi ~/.netrc
+```
+
+And then, within the `~/.netrc` file, create a line for each of the nodes
+named fusion with space-delimited field names and values like in this example:
+
+```
+machine fusion.example.com login poobah password letmein
+machine localhost login admin password nottelling
 ```
 
 Assuming you have a fusion application already set up,
